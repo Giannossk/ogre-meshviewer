@@ -17,6 +17,21 @@ parts:
         source: https://github.com/ubuntu/snapcraft-desktop-helpers.git
         source-subdir: glib-only
         plugin: make
+    assimp:
+        plugin: cmake
+        cmake-parameters:
+            - -DCMAKE_BUILD_TYPE=Release
+            - -DASSIMP_BUILD_TESTS=OFF
+            - -DASSIMP_NO_EXPORT=TRUE
+            - -DASSIMP_BUILD_OGRE_IMPORTER=OFF
+            - -DASSIMP_BUILD_ASSIMP_TOOLS=OFF
+            - -DCMAKE_INSTALL_PREFIX=/usr/
+            - -DCMAKE_CXX_COMPILER=/usr/bin/clang++-15
+        source: https://github.com/assimp/assimp.git
+        source-tag: v6.0.3
+        source-depth: 1
+        build-packages:
+            - clang-15
     ogre:
         plugin: cmake
         cmake-parameters:
@@ -48,10 +63,11 @@ parts:
             - -DCMAKE_INSTALL_PREFIX=/usr/
             - -DCMAKE_CXX_COMPILER=/usr/bin/clang++-15
         source: https://github.com/OGRECave/ogre.git
-        source-tag: v14.5.0
+        source-tag: master
         source-depth: 1
+        build-environment:
+            - CMAKE_PREFIX_PATH: $SNAPCRAFT_STAGE/usr
         build-packages:
-            - libassimp-dev
             - libxrandr-dev
             - libfreetype6-dev
             - libgles2-mesa-dev
@@ -63,7 +79,6 @@ parts:
             - cargo
             - on amd64: [nvidia-cg-dev]
         stage-packages:
-            - libassimp5
             - libfreetype6
             - libsdl2-2.0-0
             - python3
@@ -75,6 +90,7 @@ parts:
             - libgles2
             - libegl1
             - on amd64: [libcggl]
+        after: [assimp]
     viewer:
         plugin: dump
         source: https://github.com/OGRECave/ogre-meshviewer.git
