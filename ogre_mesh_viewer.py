@@ -2,6 +2,7 @@
 
 import os.path
 import time
+import struct
 
 import tkinter as tk
 from tkinter import filedialog
@@ -335,6 +336,8 @@ class MeshViewerGui(Ogre.RenderTargetListener):
                     app.reload(keep_cam=True)
                 if ImGui.MenuItem("Save Screenshot", "P"):
                     self.app._save_screenshot()
+                if ImGui.MenuItem("Save Mesh as OBJ"):
+                    self.app._save_obj()
                 ImGui.Separator()
                 if ImGui.MenuItem("Renderer Settings"):
                     self.show_render_settings = True
@@ -691,6 +694,293 @@ class MeshViewer(OgreBites.ApplicationContext, OgreBites.InputListener):
         self.getRenderWindow().update(False)
         self.getRenderWindow().writeContentsToTimestampedFile(outpath, ".png")
         self.cam.getViewport().setOverlaysEnabled(True)
+
+    def _save_obj(self):
+        import ctypes
+
+        if not self.entity:
+            return
+
+        mesh = self.entity.getMesh()
+        name = os.path.splitext(self.filename)[0]
+
+        outfile = filedialog.asksaveasfilename(
+            title="Save Mesh as OBJ",
+            initialdir=self.filedir,
+            initialfile=f"{name}.obj",
+            defaultextension=".obj",
+            filetypes=[("OBJ files", "*.obj")]
+        )
+
+        if not outfile:
+            return
+
+        try:
+            with open(outfile, "w") as f:
+
+                f.write("# Exported by OgreMeshViewer\n")
+
+                global_v_offset = 1
+                global_vt_offset = 1
+                global_vn_offset = 1
+
+                def read_buf(buf):
+                    size = buf.getSizeInBytes()
+
+                    ptr = buf.lock(Ogre.HardwareBuffer.HBL_READ_ONLY)
+
+                    try:
+                        return ctypes.string_at(int(ptr), size)
+                    finally:
+                        buf.unlock()
+
+                def get_elem(elems, semantic):
+                    for e in elems:
+                        if e.getSemantic() == semantic:
+                            return e
+                    return None
+
+                def write_vdata(vdata):
+
+                    if not vdata:
+                        return False, False, False
+
+                    elems = vdata.vertexDeclaration.getElements()
+
+                    pos_elem = get_elem(elems, Ogre.VES_POSITION)
+                    uv_elem = get_elem(elems, Ogre.VES_TEXTURE_COORDINATES)
+                    norm_elem = get_elem(elems, Ogre.VES_NORMAL)
+
+                    v_count = vdata.vertexCount
+
+                    if pos_elem:
+
+                        buf = vdata.vertexBufferBinding.getBuffer(
+                            pos_elem.getSource()
+                        )
+
+                        data = read_buf(buf)
+
+                        vsize = buf.getVertexSize()
+                        offset = pos_elem.getOffset()
+
+                        for i in range(v_count):
+
+                            x, y, z = struct.unpack_from(
+                                "3f",
+                                data,
+                                i * vsize + offset
+                            )
+
+                            f.write(f"v {x:.6f} {y:.6f} {z:.6f}\n")
+
+                    if uv_elem:
+
+                        buf = vdata.vertexBufferBinding.getBuffer(
+                            uv_elem.getSource()
+                        )
+
+                        data = read_buf(buf)
+
+                        vsize = buf.getVertexSize()
+                        offset = uv_elem.getOffset()
+
+                        for i in range(v_count):
+
+                            u, v = struct.unpack_from(
+                                "2f",
+                                data,
+                                i * vsize + offset
+                            )
+
+                            f.write(f"vt {u:.6f} {1.0 - v:.6f}\n")
+
+                    if norm_elem:
+
+                        buf = vdata.vertexBufferBinding.getBuffer(
+                            norm_elem.getSource()
+                        )
+
+                        data = read_buf(buf)
+
+                        vsize = buf.getVertexSize()
+                        offset = norm_elem.getOffset()
+
+                        for i in range(v_count):
+
+                            x, y, z = struct.unpack_from(
+                                "3f",
+                                data,
+                                i * vsize + offset
+                            )
+
+                            f.write(f"vn {x:.6f} {y:.6f} {z:.6f}\n")
+
+                    return (
+                        pos_elem is not None,
+                        uv_elem is not None,
+                        norm_elem is not None
+                    )
+
+                has_s_pos, has_s_uv, has_s_norm = write_vdata(
+                    mesh.sharedVertexData
+                )
+
+                for i in range(mesh.getNumSubMeshes()):
+
+                    submesh = mesh.getSubMesh(i)
+
+                    f.write(f"g submesh_{i}\n")
+                    f.write(f"usemtl {printable(submesh.getMaterialName())}\n")
+
+                    if submesh.useSharedVertices:
+
+                        v_start = 1
+                        vt_start = 1
+                        vn_start = 1
+
+                        has_pos = has_s_pos
+                        has_uv = has_s_uv
+                        has_norm = has_s_norm
+
+                    else:
+
+                        v_start = global_v_offset
+                        vt_start = global_vt_offset
+                        vn_start = global_vn_offset
+
+                        has_pos, has_uv, has_norm = write_vdata(
+                            submesh.vertexData
+                        )
+
+                        v_count = submesh.vertexData.vertexCount
+
+                        if has_pos:
+                            global_v_offset += v_count
+
+                        if has_uv:
+                            global_vt_offset += v_count
+
+                        if has_norm:
+                            global_vn_offset += v_count
+
+                    idata = submesh.indexData
+
+                    if not idata or idata.indexCount == 0:
+                        continue
+
+                    ibuf = idata.indexBuffer
+
+                    idx_data = read_buf(ibuf)
+
+                    is_32 = (
+                        ibuf.getType() ==
+                        Ogre.HardwareIndexBuffer.IT_32BIT
+                    )
+
+                    fmt = "I" if is_32 else "H"
+                    idx_size = 4 if is_32 else 2
+
+                    indices = []
+
+                    for j in range(idata.indexCount):
+
+                        idx = struct.unpack_from(
+                            fmt,
+                            idx_data,
+                            j * idx_size
+                        )[0]
+
+                        indices.append(idx)
+
+                    faces_to_write = []
+
+                    if (
+                        submesh.operationType ==
+                        Ogre.RenderOperation.OT_TRIANGLE_LIST
+                    ):
+
+                        for j in range(0, len(indices), 3):
+
+                            if j + 2 < len(indices):
+
+                                faces_to_write.append(
+                                    (
+                                        indices[j],
+                                        indices[j + 1],
+                                        indices[j + 2]
+                                    )
+                                )
+
+                    elif (
+                        submesh.operationType ==
+                        Ogre.RenderOperation.OT_TRIANGLE_STRIP
+                    ):
+
+                        for j in range(0, len(indices) - 2):
+
+                            if j % 2 == 0:
+
+                                faces_to_write.append(
+                                    (
+                                        indices[j],
+                                        indices[j + 1],
+                                        indices[j + 2]
+                                    )
+                                )
+
+                            else:
+
+                                faces_to_write.append(
+                                    (
+                                        indices[j],
+                                        indices[j + 2],
+                                        indices[j + 1]
+                                    )
+                                )
+
+                    elif (
+                        submesh.operationType ==
+                        Ogre.RenderOperation.OT_TRIANGLE_FAN
+                    ):
+
+                        for j in range(1, len(indices) - 1):
+
+                            faces_to_write.append(
+                                (
+                                    indices[0],
+                                    indices[j],
+                                    indices[j + 1]
+                                )
+                            )
+
+                    for face_indices in faces_to_write:
+
+                        face_str = "f"
+
+                        for idx in face_indices:
+
+                            v_idx = v_start + idx
+
+                            face_str += f" {v_idx}"
+
+                            if has_uv or has_norm:
+
+                                face_str += "/"
+
+                                if has_uv:
+                                    face_str += f"{vt_start + idx}"
+
+                                if has_norm:
+                                    face_str += f"/{vn_start + idx}"
+
+                        f.write(face_str + "\n")
+
+        except Exception as e:
+
+            Ogre.LogManager.getSingleton().logError(
+                f"Failed to export OBJ: {e}"
+            )
 
     def update_fixed_camera_yaw(self):
         camnode = self.camman.getCamera()
