@@ -716,7 +716,7 @@ class MeshViewer(OgreBites.ApplicationContext, OgreBites.InputListener):
             return
 
         try:
-            with open(outfile, "w") as f:
+            with open(outfile, "w", encoding="utf-8") as f:
 
                 f.write("# Exported by OgreMeshViewer\n")
 
@@ -976,7 +976,7 @@ class MeshViewer(OgreBites.ApplicationContext, OgreBites.InputListener):
 
                         f.write(face_str + "\n")
 
-        except Exception as e:
+        except (OSError, RuntimeError, struct.error, ValueError) as e:
 
             Ogre.LogManager.getSingleton().logError(
                 f"Failed to export OBJ: {e}"
